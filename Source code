@@ -1,0 +1,206 @@
+from builtins import range, input 
+from tensorflow.keras.layers import Input, Lambda, Dense, Flatten, AveragePooling2D, 
+Dropout 
+from tensorflow.keras.models import Model, load_model 
+from tensorflow.keras.applications import MobileNetV2 
+from tensorflow.keras.preprocessing import image 
+from tensorflow.keras.preprocessing.image import ImageDataGenerator 
+from sklearn.metrics import confusion_matrix, roc_curve 
+import seaborn as sns 
+import numpy as np 
+import matplotlib.pyplot as plt 
+import cv2 
+from glob import glob 
+from sklearn.model_selection import train_test_split 
+from sklearn.preprocessing import LabelBinarizer 
+from tensorflow.keras.utils import to_categorical 
+#define size to which images are to be resized 
+IMAGE_SIZE = [224, 224] 
+# training config: 
+epochs = 10 
+batch_size = 32 
+#define paths 
+Bulling_path = 'dataset/train/Bulling' 
+nonBulling_path = 'dataset/train/NoBulling' 
+# Use glob to grab images from path .jpg or jpeg 
+Bulling_files = glob(Bulling_path + '/*') 
+nonBulling_files = glob(nonBulling_path + '/*') 
+# Visualize file variable contents 
+print("First 5 Bulling Files: ",Bulling_files[0:5]) 
+print("Total Count: ",len(Bulling_files)) 
+print("First 5 NonBulling Files: ",nonBulling_files[0:5]) 
+print("Total Count: ",len(nonBulling_files)) 
+# Fetch Images and Class Labels from Files 
+Bulling_labels = [] 
+nonBulling_labels = [] 
+Bulling_images=[] 
+nonBulling_images=[] 
+for i in range(len(Bulling_files)): 
+image = cv2.imread(Bulling_files[i]) # read file 
+image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # arrange format as per keras 
+image = cv2.resize(image,(224,224)) # resize as per model 
+Bulling_images.append(image) # append image 
+Bulling_labels.append('Bulling') #append class label 
+for i in range(len(nonBulling_files)): 
+image = cv2.imread(nonBulling_files[i]) 
+image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) 
+image = cv2.resize(image,(224,224)) 
+nonBulling_images.append(image) 
+nonBulling_labels.append('NonBulling') 
+# look at a random image for fun 
+def plot_images(images, title): 
+nrows, ncols = 5, 8 
+figsize = [10, 6] 
+fig, ax = plt.subplots(nrows=nrows, ncols=ncols, figsize=figsize, facecolor=(1, 1, 1)) 
+for i, axi in enumerate(ax.flat): 
+axi.imshow(images[i]) 
+axi.set_axis_off() 
+plt.suptitle(title, fontsize=24) 
+plt.tight_layout(pad=0.2, rect=[0, 0, 1, 0.9]) 
+plt.show() 
+plot_images(Bulling_images, 'Positive Bulling') 
+plot_images(nonBulling_images, 'Negative Bulling') 
+# Convert to array and Normalize to interval of [0,1] 
+Bulling_images = np.array(Bulling_images) / 255 
+nonBulling_images = np.array(nonBulling_images) / 255 
+# Split into training and testing sets for both types of images 
+Bulling_x_train, Bulling_x_test, Bulling_y_train, Bulling_y_test = train_test_split( 
+Bulling_images, Bulling_labels, test_size=0.2) 
+nonBulling_x_train, nonBulling_x_test, nonBulling_y_train, nonBulling_y_test = 
+train_test_split( 
+nonBulling_images, nonBulling_labels, test_size=0.2) 
+# Merge sets for both types of images 
+X_train = np.concatenate((nonBulling_x_train, Bulling_x_train), axis=0) 
+X_test = np.concatenate((nonBulling_x_test, Bulling_x_test), axis=0) 
+y_train = np.concatenate((nonBulling_y_train, Bulling_y_train), axis=0) 
+y_test = np.concatenate((nonBulling_y_test, Bulling_y_test), axis=0) 
+# Make labels into categories - either 0 or 1, for our model 
+y_train = LabelBinarizer().fit_transform(y_train) 
+y_train = to_categorical(y_train) 
+y_test = LabelBinarizer().fit_transform(y_test) 
+y_test = to_categorical(y_test) 
+plot_images(Bulling_x_train, 'X_train') 
+plot_images(Bulling_x_test, 'X_test') 
+# y_train and y_test contain class lables 0 and 1 representing Bulling and NonBulling for 
+X_train and X_test 
+# Building Model 
+MobileNetV2 = MobileNetV2(weights="imagenet", include_top=False, 
+input_tensor=Input(shape=(224, 224, 3)))  
+outputs = MobileNetV2.output 
+outputs = Flatten(name="flatten")(outputs) 
+outputs = Dropout(0.5)(outputs) 
+outputs = Dense(2, activation="softmax")(outputs) 
+model = Model(inputs=MobileNetV2.input, outputs=outputs) 
+for layer in MobileNetV2.layers: 
+layer.trainable = False 
+model.compile( 
+loss='categorical_crossentropy', 
+optimizer='adam', 
+metrics=['accuracy'] 
+) 
+# Visualize Model 
+model.summary() 
+train_aug = ImageDataGenerator( 
+rotation_range=20, 
+width_shift_range=0.2, 
+height_shift_range=0.2, 
+horizontal_flip=True 
+) 
+history = model.fit(train_aug.flow(X_train, y_train, batch_size=batch_size), 
+validation_data=(X_test, y_test), 
+validation_steps=len(X_test) / batch_size, 
+steps_per_epoch=len(X_train) / batch_size, 
+epochs=epochs) 
+y_pred = model.predict(X_test, batch_size=batch_size) 
+prediction=y_pred[0:10] 
+# Convert to Binary classes 
+y_pred_bin = np.argmax(y_pred, axis=1) 
+y_test_bin = np.argmax(y_test, axis=1) 
+fpr, tpr, thresholds = roc_curve(y_test_bin, y_pred_bin) 
+plt.plot(fpr, tpr) 
+plt.xlim([0.0, 1.0]) 
+plt.ylim([0.0, 1.0]) 
+plt.rcParams['font.size'] = 12 
+plt.title('ROC curve for our model') 
+plt.xlabel('False Positive Rate') 
+plt.ylabel('True Positive Rate') 
+plt.grid(True) 
+plt.show() 
+def plot_confusion_matrix(normalize): 
+classes = ['Bulling','NonBulling'] 
+tick_marks = [0.5,1.5] 
+cn = confusion_matrix(y_test_bin, y_pred_bin,normalize=normalize) 
+sns.heatmap(cn,cmap='plasma',annot=True) 
+plt.xticks(tick_marks, classes) 
+plt.yticks(tick_marks, classes) 
+plt.title('Confusion Matrix') 
+plt.ylabel('True label') 
+plt.xlabel('Predicted label') 
+plt.show() 
+print('Confusion Matrix without Normalization') 
+plot_confusion_matrix(normalize=None) 
+print('Confusion Matrix with Normalized Values') 
+plot_confusion_matrix(normalize='true') 
+from sklearn.metrics import classification_report 
+print(classification_report(y_test_bin, y_pred_bin)) 
+plt.figure(figsize=(10,10)) 
+plt.plot(history.history['accuracy']) 
+plt.plot(history.history['val_accuracy']) 
+plt.title('Model Accuracy') 
+plt.ylabel('Accuracy') 
+plt.xlabel('Epoch') 
+plt.legend(['Training', 'Testing']) 
+plt.savefig('MobileNetV2 accuracy.png') 
+plt.show() 
+plt.figure(figsize=(10,10)) 
+plt.plot(history.history['loss']) 
+plt.plot(history.history['val_loss']) 
+plt.title('Model Loss') 
+plt.ylabel('Loss') 
+plt.xlabel('Epoch') 
+plt.legend(['Training', 'Testing']) 
+plt.savefig('MobileNetV2 loss.png') 
+plt.show() 
+from flask import Flask, render_template, request 
+import os 
+from werkzeug.utils import secure_filename 
+import numpy as np 
+import keras 
+from keras import models 
+import tensorflow as tf 
+from tensorflow.keras.preprocessing.image import img_to_array , load_img 
+app = Flask(__name__) 
+UPLOAD_FOLDER = 'static/uploads' 
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER 
+def pred_clean(pred): 
+if pred > 0.5: 
+return 1 
+else: 
+return 0 
+def pred_class(pred): 
+res = pred_clean(pred) 
+labels = ['Bullying','No Bullying'] 
+return labels[res] 
+@app.route("/") 
+def index(): 
+return render_template('index.html') 
+@app.route("/classify",methods=['POST']) 
+def classify(): 
+image = request.files['file'] 
+image.save(os.path.join(app.config['UPLOAD_FOLDER'],secure_filename(image.filename)
+ )) 
+#import model 
+model=models.load_model(r"model\BvsNo_10epoch_85_acc_model.h5") 
+path="static/uploads/"+secure_filename(image.filename) 
+img = load_img(path,target_size=(128,128)) 
+img = img_to_array(img) 
+img = np.expand_dims(img,axis=0) 
+img = img / 255 
+res = model.predict(img) 
+final_response = pred_class(res) 
+print(final_response) 
+return 
+render_template('classification.html',image=secure_filename(image.filename),result=final_r
+ esponse) 
+if __name__=='__main__': 
+app.run(debug=True)
